@@ -2,125 +2,104 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from playwright.sync_api import sync_playwright
-import time
+import os
 
-# --- CONFIGURATION PAGE ---
-st.set_page_config(page_title="Ephysio Analytics Connect", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Ephysio Auto-Analyse", layout="wide")
 
-# --- FONCTION D'AUTOMATISATION ---
 def fetch_from_ephysio(u, p):
     with sync_playwright() as p_wr:
-        # Configuration pour le Cloud et le local
+        # Configuration spécifique pour le cloud Streamlit
         browser = p_wr.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        context = browser.new_context(viewport={'width': 1280, 'height': 720})
+        context = browser.new_context(viewport={'width': 1280, 'height': 800})
         page = context.new_page()
         
         try:
             # 1. Connexion
+            st.info("Connexion à Ephysio...")
             page.goto("https://ephysio.pharmedsolutions.ch")
             page.fill("input[name='_username']", u)
             page.fill("input[name='_password']", p)
             page.click("button[type='submit']")
             
-            # 2. Sélection du profil (Si plusieurs profils existent)
-            # On attend que la page de profil s'affiche
-            st.info("Sélection du profil...")
-            page.wait_for_selector("text=Sélectionner le profil", timeout=10000)
-            # Clique sur le premier profil disponible ou un texte spécifique
-            page.click(".profile-item >> nth=0") # Ajuster le sélecteur si nécessaire
+            # 2. Sélection du profil
+            # On attend que la page de choix de profil apparaisse
+            st.info("Sélection du profil en cours...")
+            page.wait_for_selector(".profile-item, .list-group-item", timeout=15000)
+            # On clique sur le premier profil de la liste
+            page.click(".profile-item >> nth=0") 
             
-            # 3. Aller sur la page des factures
-            page.goto("https://ephysio.pharmedsolutions.ch/app#/invoices")
-            page.wait_for_load_state("networkidle")
+            # 3. Accès aux factures
+            page.wait_for_url("**/app#**") # Attend le chargement de l'app
+            page.goto("https://ephysio.pharmedsolutions.ch")
             
-            # 4. Menu déroulant "Plus..."
-            # On cherche le bouton qui contient "Plus"
-            page.click("button:has-text('Plus'), .btn-more") 
-            
-            # 5. Cliquer sur Exporter
+            # 4. Menu déroulant "Plus..." et Exporter
+            st.info("Ouverture du menu d'export...")
+            # On attend que le bouton avec "Plus" soit visible
+            page.wait_for_selector("button:has-text('Plus')", timeout=10000)
+            page.click("button:has-text('Plus')")
             page.click("text=Exporter")
             
-            # 6. Configuration de la fenêtre d'export (Modale)
-            # Sélectionner "Factures" dans le menu déroulant de la fenêtre
-            page.select_option("select.export-type", label="Factures") # Ajuster le sélecteur du select
+            # 5. Configuration de la fenêtre d'export
+            st.info("Configuration de l'export Excel...")
+            # Sélectionner "Factures" dans le premier menu déroulant de la modale
+            page.wait_for_selector("select", timeout=5000)
+            page.select_option("select", label="Factures")
             
-            # Remplir la date de début (01.01.2025)
-            # On cible le champ date par son label ou son placeholder
-            page.fill("input[name='start_date'], .datepicker-start", "01.01.2025")
+            # Plage de dates : Du 01.01.2025 à aujourd'hui (ou futur)
+            # On cherche les champs de date. Playwright est bon pour cliquer sur les placeholders
+            page.fill("input[placeholder='Du']", "01.01.2025")
+            # Le champ "Au" peut rester tel quel s'il est déjà dans le futur
             
-            # 7. Téléchargement
+            # 6. Lancement du téléchargement
             with page.expect_download() as download_info:
-                page.click("button:has-text('Créer le fichier Excel'), .btn-primary")
+                page.click("button:has-text('Créer le fichier Excel')")
             
             download = download_info.value
-            temp_path = "data_ephysio.xlsx"
-            download.save_as(temp_path)
+            path = "export_ephysio.xlsx"
+            download.save_as(path)
             
             browser.close()
-            return temp_path
+            return path
 
         except Exception as e:
-            st.error(f"Erreur durant l'automatisation : {e}")
-            # Capture d'écran pour le debug si ça rate (utile au début)
-            page.screenshot(path="error_debug.png")
+            # En cas d'erreur, on prend une photo de l'écran pour comprendre où ça bloque
+            page.screenshot(path="debug_error.png")
             browser.close()
+            st.error(f"Erreur d'automatisation : {e}")
+            if os.path.exists("debug_error.png"):
+                st.image("debug_error.png", caption="Capture d'écran au moment de l'erreur")
             return None
 
-# --- FONCTIONS DE CALCUL ---
-def convertir_date(val):
-    if pd.isna(val) or str(val).strip() == "": return pd.NaT
-    try: return pd.to_datetime(str(val).strip(), format="%d.%m.%Y", errors="coerce")
-    except: return pd.NaT
-
-# --- INTERFACE STREAMLIT ---
+# --- INTERFACE ---
 st.title("🏥 Analyseur Facturation Ephysio")
 
 with st.sidebar:
-    st.header("🔑 Connexion")
-    # On vérifie si les secrets existent sur Streamlit Cloud
-    default_user = st.secrets.get("USER", "")
-    default_pwd = st.secrets.get("PWD", "")
+    st.header("🔑 Identifiants")
+    # Utilisation des secrets Streamlit Cloud s'ils existent
+    user = st.text_input("User", value=st.secrets.get("USER", ""))
+    pwd = st.text_input("Password", type="password", value=st.secrets.get("PWD", ""))
     
-    u = st.text_input("Identifiant", value=default_user)
-    p = st.text_input("Mot de passe", type="password", value=default_pwd)
-    
-    if st.button("🔄 Synchroniser Ephysio", type="primary"):
-        path = fetch_from_ephysio(u, p)
-        if path:
-            st.session_state['df_brut'] = pd.read_excel(path)
-            st.success("Données importées !")
+    btn_sync = st.button("🚀 Synchroniser avec Ephysio", type="primary")
 
-# --- ANALYSE DES DONNÉES ---
-if 'df_brut' in st.session_state:
-    df_brut = st.session_state['df_brut']
-    
-    # Nettoyage selon votre script initial (Index des colonnes à vérifier)
-    # On suppose ici les colonnes : 2=Date, 8=Assureur, 12=Statut, 13=Montant, 15=Paiement
-    try:
-        df = df_brut.copy()
-        df = df.rename(columns={
-            df.columns[2]: "date_facture", df.columns[8]: "assureur",
-            df.columns[12]: "statut", df.columns[13]: "montant", 
-            df.columns[15]: "date_paiement"
-        })
-        
-        # Conversion et Logique
-        df["date_facture"] = df["date_facture"].apply(convertir_date)
-        df["date_paiement"] = df["date_paiement"].apply(convertir_date)
-        df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
-        
-        # --- AFFICHAGE ---
-        st.write(f"### Analyse des données (Mise à jour : {datetime.now().strftime('%H:%M')})")
-        
-        m1, m2 = st.columns(2)
-        m1.metric("Total Facturé", f"{int(df['montant'].sum())} CHF")
-        m2.metric("Nb Factures", len(df))
-        
-        st.dataframe(df) # Affiche le tableau complet
-        
-        # Ajoutez ici vos onglets (Liquidités, Délais, etc.) comme dans votre premier script
+if btn_sync:
+    if not user or not pwd:
+        st.error("Veuillez remplir les identifiants dans la barre latérale.")
+    else:
+        file_path = fetch_from_ephysio(user, pwd)
+        if file_path:
+            st.session_state['df'] = pd.read_excel(file_path)
+            st.success("Données synchronisées avec succès !")
 
-    except Exception as e:
-        st.error(f"Erreur d'analyse : {e}")
+# --- AFFICHAGE DES DONNÉES ---
+if 'df' in st.session_state:
+    df = st.session_state['df']
+    st.divider()
+    st.subheader("📊 Aperçu des données")
+    st.dataframe(df.head(20)) # Affiche les 20 premières lignes
+    
+    # Bouton pour télécharger manuellement l'excel extrait si besoin
+    with open("export_ephysio.xlsx", "rb") as f:
+        st.download_button("📥 Télécharger le fichier Excel brut", f, file_name="ephysio_export.xlsx")
 else:
-    st.info("Veuillez lancer la synchronisation depuis la barre latérale.")
+    st.info("Cliquez sur le bouton de synchronisation pour récupérer les données d'Ephysio.")
