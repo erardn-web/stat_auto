@@ -2,29 +2,19 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
-import subprocess
 from playwright.sync_api import sync_playwright
 
 # --- CONFIGURATION PAGE ---
 st.set_page_config(page_title="Ephysio Analytics - Nathan Erard", layout="wide")
 
 def fetch_from_ephysio(u, p):
-    """Pilote le navigateur pour récupérer l'export Excel"""
-    
-    # Étape d'auto-installation des binaires Chromium (Correction Erreur Executable)
-    if "CHROMIUM_READY" not in st.session_state:
-        with st.spinner("Installation du moteur de navigation (étape unique)..."):
-            try:
-                subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
-                st.session_state["CHROMIUM_READY"] = True
-            except Exception as e:
-                st.error(f"Erreur d'installation Chromium : {e}")
-                return None
-
+    """Pilote le navigateur système pour récupérer l'export Excel"""
     with sync_playwright() as p_wr:
         try:
-            # Lancement de Chromium avec arguments de compatibilité Cloud
+            # On utilise le binaire installé par packages.txt (chemin standard Linux)
+            # Cela évite l'erreur "Executable doesn't exist"
             browser = p_wr.chromium.launch(
+                executable_path="/usr/bin/chromium",
                 headless=True, 
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-setuid-sandbox"]
             )
@@ -40,7 +30,7 @@ def fetch_from_ephysio(u, p):
             
             # 2. Sélection du profil "Nathan Erard"
             st.info("👤 Sélection du profil : Nathan Erard...")
-            page.wait_for_selector("text=Nathan Erard", timeout=20000)
+            page.wait_for_selector("text=Nathan Erard", timeout=30000)
             page.click("text=Nathan Erard")
             
             # 3. Navigation Factures
@@ -53,11 +43,11 @@ def fetch_from_ephysio(u, p):
             st.info("📂 Accès au menu export...")
             page.wait_for_selector("button:has-text('Plus')", timeout=20000)
             page.click("button:has-text('Plus')")
-            page.wait_for_timeout(1000) # Pause pour l'animation
+            page.wait_for_timeout(1000) 
             page.click("text=Exporter")
             
             # 5. Configuration Modale
-            st.info("📅 Configuration des dates (01.01.2025)...")
+            st.info("📅 Configuration de l'export (01.01.2025)...")
             page.wait_for_selector(".modal-content", timeout=15000)
             page.select_option("select", label="Factures")
             page.fill("input[placeholder='Du']", "01.01.2025")
@@ -75,45 +65,43 @@ def fetch_from_ephysio(u, p):
             return path
 
         except Exception as e:
-            page.screenshot(path="debug_error.png")
+            # Capture d'écran automatique en cas de pépin
+            if 'page' in locals():
+                page.screenshot(path="debug_error.png")
             browser.close()
             st.error(f"Erreur de navigation : {e}")
             if os.path.exists("debug_error.png"):
-                st.image("debug_error.png", caption="Capture d'écran du blocage")
+                st.image("debug_error.png", caption="Dernière vue du robot avant l'erreur")
             return None
 
 # --- INTERFACE UTILISATEUR ---
-st.title("🏥 Analyseur Facturation")
-st.subheader("Connecté à : Nathan Erard")
+st.title("🏥 Analyseur Facturation Ephysio")
+st.subheader("Compte : Nathan Erard")
 
 with st.sidebar:
-    st.header("🔑 Accès")
-    # Récupération automatique via Secrets
+    st.header("🔑 Identifiants")
     u_val = st.text_input("Identifiant", value=st.secrets.get("USER", ""))
     p_val = st.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
     
-    btn_sync = st.button("🚀 Synchroniser Ephysio", type="primary")
+    btn_sync = st.button("🚀 Synchroniser maintenant", type="primary")
 
 if btn_sync:
     if u_val and p_val:
         res = fetch_from_ephysio(u_val, p_val)
         if res:
             st.session_state['df_nathan'] = pd.read_excel(res)
-            st.success("Données synchronisées !")
+            st.success("Données synchronisées avec succès !")
     else:
-        st.error("Identifiants manquants dans les réglages ou la barre latérale.")
+        st.error("Veuillez configurer vos identifiants.")
 
-# --- ZONE D'ANALYSE ---
+# --- AFFICHAGE ---
 if 'df_nathan' in st.session_state:
     df = st.session_state['df_nathan']
     st.divider()
-    
-    # Affichage rapide
-    st.write(f"### {len(df)} Factures récupérées")
+    st.write(f"### {len(df)} Factures trouvées")
     st.dataframe(df, use_container_width=True)
     
-    # Option de secours
     with open("data_nathan.xlsx", "rb") as f:
-        st.download_button("📥 Télécharger l'Excel", f, file_name="export_ephysio.xlsx")
+        st.download_button("📥 Télécharger le fichier Excel", f, file_name="export_nathan.xlsx")
 else:
-    st.info("Utilisez la barre latérale pour synchroniser vos données.")
+    st.info("Lancez la synchronisation pour importer les données.")
