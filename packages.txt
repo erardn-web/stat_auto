@@ -5,3 +5,5 @@ libgtk-3-0
 libasound2
 libgbm1
 libxshmfence1
+tzdata
+
