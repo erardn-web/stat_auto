@@ -1,4 +1,4 @@
 streamlit
 pandas
 openpyxl
-playwright
+playwright==1.41.0
