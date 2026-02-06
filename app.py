@@ -2,41 +2,46 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
+import subprocess
 from playwright.sync_api import sync_playwright
 
 # --- CONFIGURATION PAGE ---
-st.set_page_config(page_title="Ephysio Auto-Analyse", layout="wide")
+st.set_page_config(page_title="Ephysio Analytics - Nathan Erard", layout="wide")
 
 def fetch_from_ephysio(u, p):
     """Pilote le navigateur pour récupérer l'export Excel"""
+    
+    # Étape d'auto-installation des binaires Chromium (Correction Erreur Executable)
+    if "CHROMIUM_READY" not in st.session_state:
+        with st.spinner("Installation du moteur de navigation (étape unique)..."):
+            try:
+                subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
+                st.session_state["CHROMIUM_READY"] = True
+            except Exception as e:
+                st.error(f"Erreur d'installation Chromium : {e}")
+                return None
+
     with sync_playwright() as p_wr:
-        # Lancement de Chromium avec les paramètres de compatibilité Cloud
         try:
+            # Lancement de Chromium avec arguments de compatibilité Cloud
             browser = p_wr.chromium.launch(
                 headless=True, 
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-setuid-sandbox"]
             )
-        except Exception as e:
-            st.error(f"Erreur au lancement du navigateur : {e}")
-            return None
+            context = browser.new_context(viewport={'width': 1280, 'height': 800})
+            page = context.new_page()
             
-        context = browser.new_context(viewport={'width': 1280, 'height': 800})
-        page = context.new_page()
-        
-        try:
             # 1. Connexion
             st.info("🌍 Connexion à Ephysio...")
             page.goto("https://ephysio.pharmedsolutions.ch", wait_until="networkidle", timeout=60000)
-            
-            page.wait_for_selector("#username", timeout=20000)
             page.fill("#username", u)
             page.fill("#password", p)
             page.click("button[type='submit']")
             
-            # 2. Sélection du profil
-            st.info("👤 Choix du profil...")
-            page.wait_for_selector(".profile-item, .list-group-item", timeout=30000)
-            page.click(".profile-item >> nth=0") 
+            # 2. Sélection du profil "Nathan Erard"
+            st.info("👤 Sélection du profil : Nathan Erard...")
+            page.wait_for_selector("text=Nathan Erard", timeout=20000)
+            page.click("text=Nathan Erard")
             
             # 3. Navigation Factures
             st.info("📄 Chargement des factures...")
@@ -45,9 +50,10 @@ def fetch_from_ephysio(u, p):
             page.wait_for_load_state("networkidle")
             
             # 4. Menu Plus... et Export
-            st.info("📂 Ouverture du menu export...")
+            st.info("📂 Accès au menu export...")
+            page.wait_for_selector("button:has-text('Plus')", timeout=20000)
             page.click("button:has-text('Plus')")
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1000) # Pause pour l'animation
             page.click("text=Exporter")
             
             # 5. Configuration Modale
@@ -62,7 +68,7 @@ def fetch_from_ephysio(u, p):
                 page.click("button:has-text('Créer le fichier Excel')")
             
             download = download_info.value
-            path = "data_ephysio.xlsx"
+            path = "data_nathan.xlsx"
             download.save_as(path)
             
             browser.close()
@@ -73,33 +79,41 @@ def fetch_from_ephysio(u, p):
             browser.close()
             st.error(f"Erreur de navigation : {e}")
             if os.path.exists("debug_error.png"):
-                st.image("debug_error.png", caption="Capture écran du robot")
+                st.image("debug_error.png", caption="Capture d'écran du blocage")
             return None
 
-# --- INTERFACE ---
-st.title("🏥 Analyseur Facturation Ephysio")
+# --- INTERFACE UTILISATEUR ---
+st.title("🏥 Analyseur Facturation")
+st.subheader("Connecté à : Nathan Erard")
 
 with st.sidebar:
-    st.header("🔑 Identifiants")
+    st.header("🔑 Accès")
+    # Récupération automatique via Secrets
     u_val = st.text_input("Identifiant", value=st.secrets.get("USER", ""))
     p_val = st.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
     
-    if st.button("🚀 Synchroniser Ephysio", type="primary"):
-        if u_val and p_val:
-            res = fetch_from_ephysio(u_val, p_val)
-            if res:
-                st.session_state['df_brut'] = pd.read_excel(res)
-                st.success("Données synchronisées !")
-        else:
-            st.error("Identifiants manquants.")
+    btn_sync = st.button("🚀 Synchroniser Ephysio", type="primary")
 
-if 'df_brut' in st.session_state:
+if btn_sync:
+    if u_val and p_val:
+        res = fetch_from_ephysio(u_val, p_val)
+        if res:
+            st.session_state['df_nathan'] = pd.read_excel(res)
+            st.success("Données synchronisées !")
+    else:
+        st.error("Identifiants manquants dans les réglages ou la barre latérale.")
+
+# --- ZONE D'ANALYSE ---
+if 'df_nathan' in st.session_state:
+    df = st.session_state['df_nathan']
     st.divider()
-    df = st.session_state['df_brut']
-    st.subheader("📊 Aperçu des données")
+    
+    # Affichage rapide
+    st.write(f"### {len(df)} Factures récupérées")
     st.dataframe(df, use_container_width=True)
     
-    with open("data_ephysio.xlsx", "rb") as f:
-        st.download_button("📥 Télécharger l'Excel extrait", f, file_name="export_ephysio.xlsx")
+    # Option de secours
+    with open("data_nathan.xlsx", "rb") as f:
+        st.download_button("📥 Télécharger l'Excel", f, file_name="export_ephysio.xlsx")
 else:
-    st.info("Utilisez la barre latérale pour importer vos données.")
+    st.info("Utilisez la barre latérale pour synchroniser vos données.")
