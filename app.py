@@ -24,7 +24,7 @@ def fetch_from_ephysio(u, p):
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                 viewport={'width': 1280, 'height': 800},
                 locale="fr-CH",
-                timezone_id="Europe/Zurich"  # <--- FIX FUSEAU HORAIRE
+                timezone_id="Europe/Zurich"
             )
             page = context.new_page()
             
@@ -37,7 +37,7 @@ def fetch_from_ephysio(u, p):
             try:
                 page.click("a:has-text('Connexion'), text=Login", timeout=5000)
             except:
-                page.goto("https://ephysio.pharmedsolutions.ch/login")
+                page.goto("https://ephysio.pharmedsolutions.ch")
 
             st.info("🔑 Saisie des identifiants...")
             page.wait_for_selector("input", timeout=20000)
@@ -45,23 +45,21 @@ def fetch_from_ephysio(u, p):
             page.locator("input[type='password'], #password").first.fill(p)
             page.keyboard.press("Enter")
             
-            # 3. Sélection du profil (Nathan Erard)
-            st.info("👤 Sélection du profil...")
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(5000) 
+            # 3. Sélection du PREMIER PROFIL (Nathan Erard)
+            st.info("👤 Sélection du premier profil disponible...")
+            # On attend que n'importe quel élément de profil soit visible
+            # Ephysio utilise souvent des classes comme .profile-item ou des liens dans une liste
+            page.wait_for_selector(".profile-item, .list-group-item, a[href*='select'], .card", timeout=30000)
             
-            try:
-                page.click("text=/Nathan Erard/i", timeout=8000)
-                st.toast("Profil Nathan Erard sélectionné")
-            except:
-                st.warning("Nom non détecté, clic sur le premier profil de la liste...")
-                page.click(".profile-item, .list-group-item, .btn-profile, .card")
+            # On clique sur le premier élément qui ressemble à un profil
+            page.locator(".profile-item, .list-group-item, a[href*='select'], .card").first.click()
+            st.toast("Premier profil sélectionné")
 
             # 4. Navigation Factures
             st.info("📄 Accès à l'espace Facturation...")
             page.wait_for_url("**/app#**", timeout=30000)
-            # <--- FIX URL ICI : On va sur les factures, pas sur l'accueil
-            page.goto("https://ephysio.pharmedsolutions.ch") 
+            # On force l'URL vers le module des factures
+            page.goto("https://ephysio.pharmedsolutions.ch")
             page.wait_for_load_state("networkidle")
             
             # 5. Menu Plus... et Export
@@ -74,13 +72,16 @@ def fetch_from_ephysio(u, p):
             # 6. Configuration Modale d'Export
             st.info("📅 Configuration de l'export...")
             page.wait_for_selector(".modal-content", timeout=15000)
+            # Sélectionner 'Factures' dans le menu déroulant
             page.locator("select").select_option(label="Factures")
+            # Date fixe au 01.01.2025
             page.fill("input[placeholder='Du']", "01.01.2025")
             page.wait_for_timeout(500)
             
             # 7. Téléchargement
             st.info("⏳ Téléchargement de l'Excel...")
             with page.expect_download(timeout=60000) as download_info:
+                # Clic sur le bouton de création
                 page.locator("button:has-text('Créer'), .btn-primary").first.click()
             
             download = download_info.value
@@ -99,7 +100,7 @@ def fetch_from_ephysio(u, p):
                 st.image("debug_nathan.png", caption="Vision du robot lors de l'erreur")
             return None
 
-# --- INTERFACE STREAMLIT ---
+# --- INTERFACE ---
 st.title("🏥 Analyseur Facturation Ephysio")
 
 with st.sidebar:
@@ -120,7 +121,12 @@ if btn_run:
 if 'df_nathan' in st.session_state:
     df = st.session_state['df_nathan']
     st.divider()
-    st.subheader(f"📊 Données de Nathan Erard ({len(df)} lignes)")
+    st.subheader(f"📊 Données récupérées ({len(df)} lignes)")
     st.dataframe(df, use_container_width=True)
+    
     with open("data_nathan.xlsx", "rb") as f:
-        st.download_button("📥 Télécharger l'Excel", f, file_name="export_nathan.xlsx")
+        st.download_button(
+            label="📥 Télécharger l'Excel",
+            data=f,
+            file_name="export_ephysio.xlsx"
+        )
