@@ -13,7 +13,11 @@ def fetch_from_ephysio(u, p):
             browser = p_wr.chromium.launch(
                 executable_path="/usr/bin/chromium",
                 headless=True, 
-                args=["--no-sandbox", "--disable-dev-shm-usage"]
+                args=[
+                    "--no-sandbox", 
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage"
+                ]
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -23,48 +27,45 @@ def fetch_from_ephysio(u, p):
             )
             page = context.new_page()
             
-            # 1. Accueil & Accès Formulaire
+            # 1. Accueil (Indispensable pour débloquer le formulaire)
             st.info("🌍 Accès au site Ephysio...")
             page.goto("https://ephysio.pharmedsolutions.ch", wait_until="domcontentloaded")
             
+            # 2. Accès au formulaire de connexion (On clique sur le bouton)
             st.info("🔗 Accès au formulaire...")
             try:
-                page.click("a:has-text('Connexion'), text=Login", timeout=5000)
+                page.click("a:has-text('Connexion'), text=Login", timeout=8000)
             except:
-                page.goto("https://ephysio.pharmedsolutions.ch")
+                page.goto("https://ephysio.pharmedsolutions.ch/login")
 
-            # 2. Saisie des identifiants (Ciblage précis par ID pour éviter les erreurs)
+            # 3. Saisie des identifiants (On utilise les noms génériques si ID absent)
             st.info("🔑 Saisie des identifiants...")
-            page.wait_for_selector("#username", timeout=15000)
-            page.fill("#username", u)
-            page.fill("#password", p)
+            page.wait_for_selector("input", timeout=20000)
+            page.locator("input[type='text'], input[name*='username'], #username").first.fill(u)
+            page.locator("input[type='password'], input[name*='password'], #password").first.fill(p)
             page.keyboard.press("Enter")
             
-            # 3. Sélection du profil (FIX : On ignore le champ 'therapists')
-            st.info("👤 Recherche du profil...")
+            # 4. Sélection du profil (DELAI 2s + NG-MODEL)
+            st.info("👤 Sélection du profil...")
             page.wait_for_load_state("networkidle")
             
-            # Délai de 2 secondes comme demandé
+            # CONSIGNE : Diminuer à 2 secondes
             time.sleep(2) 
             
-            # On cible UNIQUEMENT le champ Angular UI Typeahead via son ng-model
-            selector_profil = 'input[ng-model="selectedClient"]'
-            
-            # On attend que CE champ spécifique soit visible
-            page.wait_for_selector(selector_profil, timeout=15000)
-            
-            # Activation et saisie du 'N'
-            page.click(selector_profil)
+            st.info("⌨️ Recherche profil (Saisie 'N')...")
+            # Utilisation du sélecteur ng-model pour éviter le bug du champ "therapists"
+            search_input = page.locator('input[ng-model="selectedClient"]')
+            search_input.wait_for(state="visible", timeout=15000)
+            search_input.click()
             page.keyboard.type("N", delay=100)
             
-            # 4. Sélection de Nathan Erard
+            # Sélection dans la liste Angular
             st.info("🎯 Sélection de Nathan Erard...")
-            # On attend que la suggestion contenant ton nom apparaisse
             page.wait_for_selector("text=/Nathan Erard/i", timeout=10000)
             page.click("text=/Nathan Erard/i")
 
-            # 5. Navigation Factures
-            st.info("📄 Accès à l'espace Facturation...")
+            # 5. Navigation Factures (CORRECTION URL)
+            st.info("📄 Accès aux factures...")
             page.wait_for_url("**/app#**", timeout=30000)
             page.goto("https://ephysio.pharmedsolutions.ch") 
             page.wait_for_load_state("networkidle")
@@ -76,7 +77,7 @@ def fetch_from_ephysio(u, p):
             page.wait_for_timeout(1500)
             page.click("text=Exporter")
             
-            # 7. Configuration Modale d'Export
+            # 7. Configuration Modale
             st.info("📅 Configuration de l'export...")
             page.wait_for_selector(".modal-content", timeout=15000)
             page.locator("select").select_option(label="Factures")
@@ -100,7 +101,7 @@ def fetch_from_ephysio(u, p):
             browser.close()
             st.error(f"Détail du blocage : {e}")
             if os.path.exists("debug_nathan.png"):
-                st.image("debug_nathan.png", caption="Dernière vue du robot")
+                st.image("debug_nathan.png", caption="Vision du robot")
             return None
 
 # --- INTERFACE ---
@@ -117,8 +118,6 @@ if btn_run:
         if file_path:
             st.session_state['df_nathan'] = pd.read_excel(file_path)
             st.success("Synchronisation réussie !")
-    else:
-        st.error("Veuillez entrer vos identifiants.")
 
 if 'df_nathan' in st.session_state:
     st.dataframe(st.session_state['df_nathan'], use_container_width=True)
