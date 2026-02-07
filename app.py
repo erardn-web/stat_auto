@@ -13,11 +13,7 @@ def fetch_from_ephysio(u, p):
             browser = p_wr.chromium.launch(
                 executable_path="/usr/bin/chromium",
                 headless=True, 
-                args=[
-                    "--no-sandbox", 
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage"
-                ]
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -27,66 +23,52 @@ def fetch_from_ephysio(u, p):
             )
             page = context.new_page()
             
-            # 1. Accueil
-            st.info("🌍 Accès au site Ephysio...")
+            # 1. Login Direct (Plus rapide que passer par l'accueil)
+            st.info("🚀 Accès direct au login...")
             page.goto("https://ephysio.pharmedsolutions.ch", wait_until="domcontentloaded")
             
-            # 2. Connexion
-            st.info("🔗 Accès au formulaire...")
-            try:
-                page.click("a:has-text('Connexion'), text=Login", timeout=5000)
-            except:
-                page.goto("https://ephysio.pharmedsolutions.ch")
-
-            st.info("🔑 Saisie des identifiants...")
-            page.wait_for_selector("input", timeout=20000)
-            page.locator("input[type='text'], input[name*='user'], #username").first.fill(u)
-            page.locator("input[type='password'], #password").first.fill(p)
+            # Saisie rapide
+            page.fill("#username", u)
+            page.fill("#password", p)
             page.keyboard.press("Enter")
             
-            # 3. Sélection du profil avec saisie de lettre
-            st.info("⏳ Chargement de la page de profil...")
-            page.wait_for_load_state("networkidle")
-            time.sleep(5) 
+            # 2. Transition Profil (Temps diminué à 2s au lieu de 10s)
+            st.info("👤 Recherche du profil...")
+            time.sleep(2) 
             
-            st.info("👤 Recherche du profil 'Nathan Erard' via saisie...")
-            # On cherche le champ de saisie du profil (souvent un input ou un champ de recherche)
-            # On clique d'abord pour donner le focus
-            input_profil = page.locator("input[placeholder*='Profil'], .select2-search__field, input[type='text']").first
-            input_profil.click()
+            # Ciblage précis du champ de recherche profil pour éviter le bug "therapists"
+            # On cherche un champ de type texte ou recherche, pas un "number"
+            search_input = page.locator("input[type='text'], .select2-search__field, input[placeholder*='Chercher']").first
+            search_input.wait_for(state="visible", timeout=10000)
+            search_input.click()
             
-            # On tape 'N' pour faire apparaître la liste
-            page.keyboard.type("N", delay=200)
-            st.info("Type 'N' envoyé, attente des suggestions...")
+            # Saisie de la lettre N
+            page.keyboard.type("N")
             
-            # On attend que le nom apparaisse dans la liste des suggestions
+            # Sélection de Nathan Erard
+            st.info("🎯 Sélection de Nathan Erard...")
             page.wait_for_selector("text=/Nathan Erard/i", timeout=10000)
             page.click("text=/Nathan Erard/i")
-            st.toast("Profil Nathan Erard sélectionné !")
 
-            # 4. Navigation Factures
-            st.info("📄 Accès à l'espace Facturation...")
-            page.wait_for_url("**/app#**", timeout=30000)
-            # Utilisation de l'URL directe pour les factures
+            # 3. Navigation Factures
+            st.info("📄 Accès aux factures...")
+            page.wait_for_url("**/app#**", timeout=20000)
             page.goto("https://ephysio.pharmedsolutions.ch") 
             page.wait_for_load_state("networkidle")
             
-            # 5. Menu Plus... et Export
-            st.info("📂 Menu export...")
-            page.wait_for_selector("button:has-text('Plus')", timeout=20000)
+            # 4. Export
+            st.info("📂 Export Excel...")
+            page.wait_for_selector("button:has-text('Plus')", timeout=15000)
             page.click("button:has-text('Plus')")
-            page.wait_for_timeout(2000)
+            time.sleep(1)
             page.click("text=Exporter")
             
-            # 6. Configuration Modale d'Export
-            st.info("📅 Configuration de l'export...")
-            page.wait_for_selector(".modal-content", timeout=15000)
+            # Configuration Modale
+            page.wait_for_selector(".modal-content")
             page.locator("select").select_option(label="Factures")
             page.fill("input[placeholder='Du']", "01.01.2025")
-            page.wait_for_timeout(500)
             
-            # 7. Téléchargement
-            st.info("⏳ Téléchargement de l'Excel...")
+            # 5. Téléchargement
             with page.expect_download(timeout=60000) as download_info:
                 page.locator("button:has-text('Créer'), .btn-primary").first.click()
             
@@ -101,30 +83,21 @@ def fetch_from_ephysio(u, p):
             if 'page' in locals():
                 page.screenshot(path="debug_nathan.png")
             browser.close()
-            st.error(f"Détail du blocage : {e}")
+            st.error(f"Détail : {e}")
             if os.path.exists("debug_nathan.png"):
-                st.image("debug_nathan.png", caption="Vision du robot lors de l'erreur")
+                st.image("debug_nathan.png", caption="Vision du robot")
             return None
 
-# --- INTERFACE ---
-st.title("🏥 Analyseur Facturation Ephysio")
+# Interface
+st.title("🏥 Analyseur Ephysio")
+u_side = st.sidebar.text_input("Identifiant", value=st.secrets.get("USER", ""))
+p_side = st.sidebar.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
 
-with st.sidebar:
-    st.header("🔑 Connexion")
-    u_sidebar = st.text_input("Identifiant", value=st.secrets.get("USER", ""))
-    p_sidebar = st.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
-    btn_run = st.button("🚀 Synchroniser les données", type="primary")
-
-if btn_run:
-    if u_sidebar and p_sidebar:
-        file_path = fetch_from_ephysio(u_sidebar, p_sidebar)
-        if file_path:
-            st.session_state['df_nathan'] = pd.read_excel(file_path)
-            st.success("Synchronisation réussie !")
-    else:
-        st.error("Veuillez entrer vos identifiants.")
+if st.sidebar.button("🚀 Synchroniser"):
+    res = fetch_from_ephysio(u_side, p_side)
+    if res:
+        st.session_state['df_nathan'] = pd.read_excel(res)
+        st.success("Synchronisé !")
 
 if 'df_nathan' in st.session_state:
-    df = st.session_state['df_nathan']
-    st.divider()
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(st.session_state['df_nathan'], use_container_width=True)
