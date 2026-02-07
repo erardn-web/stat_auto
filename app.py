@@ -10,15 +10,10 @@ st.set_page_config(page_title="Analyseur Ephysio - Nathan Erard", layout="wide")
 def fetch_from_ephysio(u, p):
     with sync_playwright() as p_wr:
         try:
-            # Lancement avec les options de compatibilité Streamlit
             browser = p_wr.chromium.launch(
                 executable_path="/usr/bin/chromium",
                 headless=True, 
-                args=[
-                    "--no-sandbox", 
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage"
-                ]
+                args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -28,60 +23,55 @@ def fetch_from_ephysio(u, p):
             )
             page = context.new_page()
             
-            # 1. Accueil
-            st.info("🌍 Accès au site Ephysio...")
+            # 1. Connexion
+            st.info("🌍 Accès à Ephysio...")
             page.goto("https://ephysio.pharmedsolutions.ch", wait_until="domcontentloaded")
             
-            # 2. Connexion
-            st.info("🔗 Accès au formulaire...")
-            try:
-                page.click("a:has-text('Connexion'), text=Login", timeout=5000)
-            except:
-                page.goto("https://ephysio.pharmedsolutions.ch")
-
             st.info("🔑 Saisie des identifiants...")
             page.wait_for_selector("input", timeout=20000)
-            page.locator("input[type='text'], input[name*='user'], #username").first.fill(u)
+            page.locator("input[type='text'], #username").first.fill(u)
             page.locator("input[type='password'], #password").first.fill(p)
+            
+            # On simule l'appui sur Entrée pour valider
             page.keyboard.press("Enter")
             
-            # 3. Sélection du PREMIER PROFIL (Nathan Erard)
-            st.info("👤 Sélection du premier profil disponible...")
-            # On attend que n'importe quel élément de profil soit visible
-            # Ephysio utilise souvent des classes comme .profile-item ou des liens dans une liste
-            page.wait_for_selector(".profile-item, .list-group-item, a[href*='select'], .card", timeout=30000)
+            # 2. Transition vers le profil
+            st.info("👤 Chargement de la liste des profils...")
+            # On attend que l'URL change (signe que le login est accepté)
+            page.wait_for_load_state("networkidle")
+            # PAUSE CRUCIALE : on laisse 5 secondes au système pour afficher les profils
+            time.sleep(5) 
             
-            # On clique sur le premier élément qui ressemble à un profil
-            page.locator(".profile-item, .list-group-item, a[href*='select'], .card").first.click()
-            st.toast("Premier profil sélectionné")
-
-            # 4. Navigation Factures
-            st.info("📄 Accès à l'espace Facturation...")
+            # 3. Sélection du PREMIER PROFIL
+            # On cherche n'importe quel élément cliquable qui ressemble à un choix de compte
+            st.info("🎯 Clic sur le premier profil trouvé...")
+            page.wait_for_selector(".profile-item, .list-group-item, a[href*='select'], .card, [role='button']", timeout=30000)
+            
+            # On force le clic sur le premier élément de la liste
+            page.locator(".profile-item, .list-group-item, a[href*='select'], .card, [role='button']").first.click()
+            
+            # 4. Accès aux Factures
+            st.info("📄 Navigation vers les factures...")
             page.wait_for_url("**/app#**", timeout=30000)
-            # On force l'URL vers le module des factures
             page.goto("https://ephysio.pharmedsolutions.ch")
             page.wait_for_load_state("networkidle")
             
-            # 5. Menu Plus... et Export
-            st.info("📂 Menu export...")
+            # 5. Export
+            st.info("📂 Ouverture menu Export...")
             page.wait_for_selector("button:has-text('Plus')", timeout=20000)
             page.click("button:has-text('Plus')")
-            page.wait_for_timeout(1500) 
+            time.sleep(2)
             page.click("text=Exporter")
             
-            # 6. Configuration Modale d'Export
+            # 6. Configuration Modale
             st.info("📅 Configuration de l'export...")
             page.wait_for_selector(".modal-content", timeout=15000)
-            # Sélectionner 'Factures' dans le menu déroulant
             page.locator("select").select_option(label="Factures")
-            # Date fixe au 01.01.2025
             page.fill("input[placeholder='Du']", "01.01.2025")
-            page.wait_for_timeout(500)
             
             # 7. Téléchargement
             st.info("⏳ Téléchargement de l'Excel...")
             with page.expect_download(timeout=60000) as download_info:
-                # Clic sur le bouton de création
                 page.locator("button:has-text('Créer'), .btn-primary").first.click()
             
             download = download_info.value
@@ -95,38 +85,21 @@ def fetch_from_ephysio(u, p):
             if 'page' in locals():
                 page.screenshot(path="debug_nathan.png")
             browser.close()
-            st.error(f"Détail du blocage : {e}")
+            st.error(f"Erreur de parcours : {e}")
             if os.path.exists("debug_nathan.png"):
-                st.image("debug_nathan.png", caption="Vision du robot lors de l'erreur")
+                st.image("debug_nathan.png", caption="Vision du robot lors du blocage")
             return None
 
-# --- INTERFACE ---
+# Interface
 st.title("🏥 Analyseur Facturation Ephysio")
+u_in = st.sidebar.text_input("User", value=st.secrets.get("USER", ""))
+p_in = st.sidebar.text_input("Pass", type="password", value=st.secrets.get("PWD", ""))
 
-with st.sidebar:
-    st.header("🔑 Connexion")
-    u_sidebar = st.text_input("Identifiant", value=st.secrets.get("USER", ""))
-    p_sidebar = st.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
-    btn_run = st.button("🚀 Synchroniser les données", type="primary")
+if st.sidebar.button("🚀 Synchroniser"):
+    res = fetch_from_ephysio(u_in, p_in)
+    if res:
+        st.session_state['df'] = pd.read_excel(res)
+        st.success("Synchronisation réussie !")
 
-if btn_run:
-    if u_sidebar and p_sidebar:
-        file_path = fetch_from_ephysio(u_sidebar, p_sidebar)
-        if file_path:
-            st.session_state['df_nathan'] = pd.read_excel(file_path)
-            st.success("Synchronisation réussie !")
-    else:
-        st.error("Veuillez entrer vos identifiants.")
-
-if 'df_nathan' in st.session_state:
-    df = st.session_state['df_nathan']
-    st.divider()
-    st.subheader(f"📊 Données récupérées ({len(df)} lignes)")
-    st.dataframe(df, use_container_width=True)
-    
-    with open("data_nathan.xlsx", "rb") as f:
-        st.download_button(
-            label="📥 Télécharger l'Excel",
-            data=f,
-            file_name="export_ephysio.xlsx"
-        )
+if 'df' in st.session_state:
+    st.dataframe(st.session_state['df'], use_container_width=True)
