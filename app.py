@@ -13,11 +13,7 @@ def fetch_from_ephysio(u, p):
             browser = p_wr.chromium.launch(
                 executable_path="/usr/bin/chromium",
                 headless=True, 
-                args=[
-                    "--no-sandbox", 
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage"
-                ]
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -27,68 +23,61 @@ def fetch_from_ephysio(u, p):
             )
             page = context.new_page()
             
-            # 1. Accueil
+            # 1. Accueil & Login
             st.info("🌍 Accès au site Ephysio...")
             page.goto("https://ephysio.pharmedsolutions.ch", wait_until="domcontentloaded")
             
-            # 2. Accès au formulaire de connexion
-            st.info("🔗 Accès au formulaire...")
             try:
                 page.click("a:has-text('Connexion'), text=Login", timeout=5000)
             except:
                 page.goto("https://ephysio.pharmedsolutions.ch")
 
-            # 3. Saisie des identifiants
             st.info("🔑 Saisie des identifiants...")
-            page.wait_for_selector("input", timeout=20000)
-            page.locator("input[type='text'], input[name*='user'], #username").first.fill(u)
-            page.locator("input[type='password'], #password").first.fill(p)
+            page.wait_for_selector("#username", timeout=20000)
+            page.fill("#username", u)
+            page.fill("#password", p)
             page.keyboard.press("Enter")
             
-            # 4. Sélection du profil (Délai réduit à 2s + Saisie du 'N')
-            st.info("👤 Sélection du profil...")
+            # 2. Sélection du profil (FIX avec ng-model)
+            st.info("👤 Recherche du profil...")
             page.wait_for_load_state("networkidle")
+            time.sleep(2) # Les 2 secondes demandées
             
-            # RÉDUCTION DU TEMPS À 2 SECONDES
-            time.sleep(2) 
+            # Ciblage du champ Angular spécifique
+            target_input = page.locator('input[ng-model="selectedClient"]')
+            target_input.wait_for(state="visible", timeout=15000)
             
-            st.info("⌨️ Recherche du profil 'Nathan Erard' (Saisie 'N')...")
-            # On cherche spécifiquement le champ texte pour éviter le bug du champ "therapists"
-            search_input = page.locator("input[type='text'], .select2-search__field, input[placeholder*='Chercher']").first
-            search_input.click()
-            page.keyboard.type("N", delay=100)
+            # On clique, on vide (au cas où) et on tape "Nathan"
+            target_input.click()
+            page.keyboard.type("Nathan", delay=150)
             
-            try:
-                # On attend que le nom apparaisse après la frappe du 'N'
-                page.wait_for_selector("text=/Nathan Erard/i", timeout=8000)
-                page.click("text=/Nathan Erard/i")
-                st.toast("Profil Nathan Erard sélectionné !")
-            except:
-                st.warning("Nom non détecté, clic sur le premier élément de la liste...")
-                page.click(".profile-item, .list-group-item, .btn-profile, .card")
+            st.info("🎯 Sélection de Nathan Erard dans la liste...")
+            # On attend que la liste de suggestions d'Angular apparaisse
+            # On clique sur l'élément qui contient le texte complet
+            page.wait_for_selector("text=/Nathan Erard/i", timeout=10000)
+            page.click("text=/Nathan Erard/i")
 
-            # 5. Navigation Factures
+            # 3. Navigation Factures
             st.info("📄 Accès à l'espace Facturation...")
             page.wait_for_url("**/app#**", timeout=30000)
             page.goto("https://ephysio.pharmedsolutions.ch") 
             page.wait_for_load_state("networkidle")
             
-            # 6. Menu Plus... et Export
+            # 4. Export
             st.info("📂 Menu export...")
             page.wait_for_selector("button:has-text('Plus')", timeout=20000)
             page.click("button:has-text('Plus')")
             page.wait_for_timeout(1500)
             page.click("text=Exporter")
             
-            # 7. Configuration Modale d'Export
+            # 5. Configuration Modale
             st.info("📅 Configuration de l'export...")
             page.wait_for_selector(".modal-content", timeout=15000)
             page.locator("select").select_option(label="Factures")
             page.fill("input[placeholder='Du']", "01.01.2025")
-            page.wait_for_timeout(500)
             
-            # 8. Téléchargement
-            st.info("⏳ Téléchargement de l'Excel...")
+            # 6. Téléchargement
+            st.info("⏳ Téléchargement...")
             with page.expect_download(timeout=60000) as download_info:
                 page.locator("button:has-text('Créer'), .btn-primary").first.click()
             
@@ -103,24 +92,23 @@ def fetch_from_ephysio(u, p):
             if 'page' in locals():
                 page.screenshot(path="debug_nathan.png")
             browser.close()
-            st.error(f"Détail du blocage : {e}")
+            st.error(f"Détail : {e}")
             if os.path.exists("debug_nathan.png"):
-                st.image("debug_nathan.png", caption="Vision du robot lors de l'erreur")
+                st.image("debug_nathan.png", caption="Vision du robot")
             return None
 
-# --- INTERFACE ---
+# Interface Streamlit
 st.title("🏥 Analyseur Facturation Ephysio")
 
 with st.sidebar:
+    st.header("🔑 Connexion")
     u_side = st.text_input("Identifiant", value=st.secrets.get("USER", ""))
     p_side = st.text_input("Mot de passe", type="password", value=st.secrets.get("PWD", ""))
-    btn = st.button("🚀 Synchroniser", type="primary")
-
-if btn:
-    res = fetch_from_ephysio(u_side, p_side)
-    if res:
-        st.session_state['df_nathan'] = pd.read_excel(res)
-        st.success("Synchronisation réussie !")
+    if st.button("🚀 Synchroniser", type="primary"):
+        res = fetch_from_ephysio(u_side, p_side)
+        if res:
+            st.session_state['df_nathan'] = pd.read_excel(res)
+            st.success("Synchronisé !")
 
 if 'df_nathan' in st.session_state:
     st.dataframe(st.session_state['df_nathan'], use_container_width=True)
