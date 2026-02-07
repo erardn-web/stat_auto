@@ -10,6 +10,7 @@ st.set_page_config(page_title="Analyseur Ephysio - Nathan Erard", layout="wide")
 def fetch_from_ephysio(u, p):
     with sync_playwright() as p_wr:
         try:
+            # Lancement stable pour Streamlit Cloud
             browser = p_wr.chromium.launch(
                 executable_path="/usr/bin/chromium",
                 headless=True, 
@@ -44,25 +45,24 @@ def fetch_from_ephysio(u, p):
             page.locator("input[type='password'], #password").first.fill(p)
             page.keyboard.press("Enter")
             
-            # 3. Sélection du profil (Correction avec ng-model="selectedClient")
+            # 3. Sélection du profil (Délai réduit à 2s + Sélecteur ng-model)
             st.info("⏳ Chargement de la page de profil...")
             page.wait_for_load_state("networkidle")
-            time.sleep(5) 
+            
+            # RÉDUCTION DU TEMPS À 2 SECONDES
+            time.sleep(2) 
             
             st.info("👤 Recherche du profil 'Nathan Erard'...")
-            # Ciblage précis du champ Angular identifié
-            selector_angular = 'input[ng-model="selectedClient"]'
-            page.wait_for_selector(selector_angular, timeout=15000)
+            # Ciblage précis du champ Angular UI Typeahead
+            selector_profil = 'input[ng-model="selectedClient"]'
+            page.wait_for_selector(selector_profil, timeout=15000)
             
-            # On clique pour activer le champ
-            page.click(selector_angular)
+            # Activation du champ et saisie
+            page.click(selector_profil)
+            page.keyboard.type("N", delay=100)
+            st.info("Lettre 'N' saisie, attente de la suggestion...")
             
-            # On tape 'N' pour déclencher la recherche search($viewValue)
-            page.keyboard.type("N", delay=200)
-            st.info("Lettre 'N' saisie, attente des suggestions Angular...")
-            
-            # On attend que la liste de suggestions affiche le nom
-            # On utilise un sélecteur de texte flexible
+            # On attend que le nom apparaisse dans la liste générée par Angular
             page.wait_for_selector("text=/Nathan Erard/i", timeout=10000)
             page.click("text=/Nathan Erard/i")
             st.toast("Profil Nathan Erard sélectionné !")
@@ -70,7 +70,6 @@ def fetch_from_ephysio(u, p):
             # 4. Navigation Factures
             st.info("📄 Accès à l'espace Facturation...")
             page.wait_for_url("**/app#**", timeout=30000)
-            # URL de l'espace de travail
             page.goto("https://ephysio.pharmedsolutions.ch") 
             page.wait_for_load_state("networkidle")
             
@@ -78,7 +77,7 @@ def fetch_from_ephysio(u, p):
             st.info("📂 Menu export...")
             page.wait_for_selector("button:has-text('Plus')", timeout=20000)
             page.click("button:has-text('Plus')")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(1500)
             page.click("text=Exporter")
             
             # 6. Configuration Modale d'Export
